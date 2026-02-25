@@ -2,7 +2,7 @@
 set -e
 
 # Set MODEL_DIR to Qwen3-ASR checkpoint path, e.g. export MODEL_DIR=/path/to/Qwen3-ASR-0.6B
-MODEL_DIR="/home/ec_user/workspace/work/test/Qwen3-ASR-0.6B"
+MODEL_DIR="/path/to/model"
 OUTDIR="${OUTDIR:-./model}"
 
 rm -rf "${OUTDIR:?}"/*
