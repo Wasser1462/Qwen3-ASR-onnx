@@ -1,1 +1,5 @@
-opening soon .......
+# export onnx model
+
+```bash 
+    bash run.sh
+```
