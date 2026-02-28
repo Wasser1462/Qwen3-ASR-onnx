@@ -22,9 +22,4 @@ Thumbs.db
 # Logs
 *.log
 
-models/Qwen3-0.6B/model.safetensors
-models/README.md
-models/llm_fp16/
-models/llm_fp32/
-models/llm_int8/
-models_MLT/
+model/
