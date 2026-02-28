@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 #
-# Qwen3-ASR transformers backend (single file): config, processor, model.
-# For export and inference: from transformers_backend import Qwen3ASRConfig, Qwen3ASRForConditionalGeneration, Qwen3ASRProcessor
-# SPDX-License-Identifier: Apache-2.0
+# Source: https://github.com/QwenLM/Qwen3-ASR (code copied from this repository)
 
 from transformers.configuration_utils import PretrainedConfig
 from transformers.utils import logging

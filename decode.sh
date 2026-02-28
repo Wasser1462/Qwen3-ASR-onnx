@@ -4,8 +4,8 @@ set -e
 cd "$(dirname "$0")"
 
 # Hardcoded paths (edit here if needed)
-MODEL_DIR="/home/ec_user/workspace/work/test/Qwen3-ASR-0.6B"
-WAV_PATH="/home/ec_user/workspace/work/Qwen3-ASR-onnx/test_wavs/far_3.wav"
+MODEL_DIR="./Qwen3-ASR-0.6B"
+WAV_PATH="./Qwen3-ASR-onnx/test_wavs/far_3.wav"
 
 if [ ! -f "${MODEL_DIR}/config.json" ]; then
     echo "Error: ${MODEL_DIR}/config.json not found."
