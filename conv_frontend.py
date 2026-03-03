@@ -25,33 +25,13 @@ def _conv_out_len_3x_stride2(n: int) -> int:
 
 
 def _proc_audio_tokens_len_int(n: int) -> int:
-    # matches Qwen3ASRProcessor _get_feat_extract_output_lengths (base=100 -> 13)
     leave = int(n) % 100
     feat = (leave - 1) // 2 + 1
     out = ((feat - 1) // 2 + 1 - 1) // 2 + 1 + (int(n) // 100) * 13
     return int(out)
 
 
-def _feat_to_audio_tokens_len(feat_len: torch.Tensor, chunk_size: int = 100) -> torch.Tensor:
-    """Calculate audio token count from feature length."""
-    def _down(x: torch.Tensor) -> torch.Tensor:
-        return (x - 1) // 2 + 1
-
-    def _aftercnn(x: torch.Tensor) -> torch.Tensor:
-        return _down(_down(_down(x)))
-
-    cs = int(chunk_size)
-    n = feat_len.to(torch.int64)
-    full = n // cs
-    rem = n % cs
-
-    tn = _conv_out_len_3x_stride2(cs)
-    out = full * int(tn) + _aftercnn(rem)
-    return torch.clamp(out, min=0).to(torch.int64)
-
-
 class ConvFrontend(nn.Module):
-    """Conv frontend processing - handles Conv operations separately from ONNX export."""
 
     def __init__(self, audio_tower: nn.Module, chunk_size: int = 100):
         super().__init__()
