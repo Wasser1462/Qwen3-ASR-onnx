@@ -279,7 +279,7 @@ def verify_onnx(model_path: str, inputs_np: Dict[str, Any], fetches: List[str]):
 
 def _register_qwen3_asr():
     try:
-        from transformers_backend import Qwen3ASRConfig, Qwen3ASRForConditionalGeneration, Qwen3ASRProcessor
+        from qwen3_asr import Qwen3ASRConfig, Qwen3ASRForConditionalGeneration, Qwen3ASRProcessor
         AutoConfig.register("qwen3_asr", Qwen3ASRConfig)
         from transformers import AutoModel as _AM
         from transformers import AutoProcessor as _AP

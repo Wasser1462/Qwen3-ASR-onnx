@@ -41,7 +41,7 @@ def _feat_to_audio_tokens_len_np(feat_len: np.ndarray, chunk_size: int = 100) ->
 
 def _register_qwen3_asr() -> bool:
     try:
-        from transformers_backend_infer import Qwen3ASRConfig, Qwen3ASRProcessor
+        from qwen3_asr import Qwen3ASRConfig, Qwen3ASRProcessor
         from transformers import AutoConfig, AutoProcessor
         AutoConfig.register("qwen3_asr", Qwen3ASRConfig)
         AutoProcessor.register(Qwen3ASRConfig, Qwen3ASRProcessor)
