@@ -30,6 +30,31 @@ def _proc_audio_tokens_len_int(n: int) -> int:
     out = ((feat - 1) // 2 + 1 - 1) // 2 + 1 + (int(n) // 100) * 13
     return int(out)
 
+def _aftercnn(x: int) -> int:
+    x = (x - 1) // 2 + 1
+    x = (x - 1) // 2 + 1
+    return (x - 1) // 2 + 1
+
+
+def _feat_to_audio_tokens_len(feat_len, chunk_size: int = 100):
+    import torch
+    if isinstance(feat_len, torch.Tensor):
+        cs = int(chunk_size)
+        n = feat_len.to(torch.int64)
+        full = n // cs
+        rem = n % cs
+        tn = _conv_out_len_3x_stride2(cs)
+        out = full * tn + torch.tensor([_aftercnn(int(r)) for r in rem], device=n.device)
+        return torch.clamp(out, min=0).to(torch.int64)
+    else:
+        n = int(feat_len)
+        cs = int(chunk_size)
+        full = n // cs
+        rem = n % cs
+        tn = _conv_out_len_3x_stride2(cs)
+        out = full * tn + _aftercnn(rem)
+        return max(out, 0)
+
 
 class ConvFrontend(nn.Module):
 
@@ -92,14 +117,9 @@ class ConvFrontend(nn.Module):
         self.window_aftercnn = int(self.tokens_per_chunk * ratio)
 
     def forward(self, mel_bt_f: torch.Tensor) -> torch.Tensor:
-        """
-        mel_bt_f: (B, T, F) - mel spectrogram features
-        Returns: (B, A, dim) - processed features
-        """
         B, T, Fdim = mel_bt_f.shape
         cs = self.chunk_size
 
-        # pad to chunk_size multiple
         pad_len = (cs - (T % cs)) % cs
         mel_bt_f = F.pad(mel_bt_f, (0, 0, 0, pad_len))
 
