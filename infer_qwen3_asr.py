@@ -19,7 +19,6 @@ from transformers import AutoProcessor, AutoTokenizer
 
 
 def _feat_to_audio_tokens_len_np(feat_len: np.ndarray, chunk_size: int = 100) -> np.ndarray:
-    """Audio token count from feature length (numpy, no torch). Same formula as conv_frontend."""
     def _conv_out_len_3x_stride2(n: int) -> int:
         x = (int(n) + 1) // 2
         x = (x + 1) // 2
@@ -52,7 +51,6 @@ def _register_qwen3_asr() -> bool:
 
 
 def _make_sess(path: str, device: str = "cpu") -> ort.InferenceSession:
-    """Create ONNX inference session."""
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     so.enable_mem_pattern = False
@@ -64,7 +62,6 @@ def _make_sess(path: str, device: str = "cpu") -> ort.InferenceSession:
 
 
 def _make_sess_with_fallback(path: str, device: str, fp32_fallback: Optional[str] = None) -> ort.InferenceSession:
-    """Create session with FP32 fallback for INT8 failures."""
     try:
         return _make_sess(path, device=device)
     except Exception as e:
@@ -76,7 +73,6 @@ def _make_sess_with_fallback(path: str, device: str, fp32_fallback: Optional[str
 
 
 def _infer_cache_meta(dec_sess: ort.InferenceSession) -> Tuple[int, Optional[int], Optional[int], Optional[int]]:
-    """Infer cache metadata from decoder inputs."""
     inps = {i.name: i for i in dec_sess.get_inputs()}
     keys = sorted([n for n in inps if n.startswith("cache_key_")], key=lambda x: int(x.split("_")[-1]))
     if not keys:
@@ -91,7 +87,6 @@ def _infer_cache_meta(dec_sess: ort.InferenceSession) -> Tuple[int, Optional[int
 
 
 def _load_audio_any(path: str) -> np.ndarray:
-    """Load audio file (wav or npy), resample to 16k mono."""
     if path.endswith(".npy"):
         wav = np.load(path)
         wav = np.asarray(wav, dtype=np.float32).reshape(-1)
@@ -116,7 +111,6 @@ def _load_audio_any(path: str) -> np.ndarray:
 
 
 def _check_model_dir(model_dir: str) -> None:
-    """Ensure model_dir is a Qwen3-ASR checkpoint (config.json with model_type qwen3_asr)."""
     config_path = os.path.join(model_dir, "config.json")
     if not os.path.isfile(config_path):
         raise ValueError(
@@ -136,7 +130,6 @@ def _check_model_dir(model_dir: str) -> None:
 
 
 def _load_tokenizer(model_dir: str):
-    """Load tokenizer with fallback options."""
     for kwargs in (
         dict(trust_remote_code=True, use_slow_tokenizer=True, fix_mistral_regex=True),
         dict(trust_remote_code=True, fix_mistral_regex=True),
@@ -151,7 +144,6 @@ def _load_tokenizer(model_dir: str):
 
 
 def _load_processor(model_dir: str):
-    """Load processor with fallback options."""
     for kwargs in (
         dict(trust_remote_code=True, fix_mistral_regex=True),
         dict(trust_remote_code=True),
@@ -164,7 +156,6 @@ def _load_processor(model_dir: str):
 
 
 def _trim_audio_features(audio_features: np.ndarray, eps: float = 1e-6) -> np.ndarray:
-    """Trim padding tokens based on energy threshold."""
     if audio_features.ndim != 3:
         return audio_features
     B, A, H = audio_features.shape

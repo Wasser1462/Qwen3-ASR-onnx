@@ -292,19 +292,29 @@ def _register_qwen3_asr():
 
 def make_dummy_inputs(proc, device: torch.device):
     tok = getattr(proc.tokenizer, "audio_token", None) or "<|audio_pad|>"
-    text_dummy = [tok]
-    audio_dummy = [np.zeros(16000, dtype=np.float32)]
-    batch = proc(text=text_dummy, audio=audio_dummy, return_tensors="pt", padding=True)
-    return (
-        batch["input_ids"].to(device),
-        batch["attention_mask"].to(device),
-        batch["input_features"].to(device),
-        batch["feature_attention_mask"].to(device),
-    )
+
+    try:
+        text_dummy = [tok]
+        text_inputs = proc.tokenizer(text_dummy, padding=True, return_tensors="pt")
+        audio_inputs = proc.feature_extractor(
+            raw_speech=np.zeros(16000, dtype=np.float32),
+            sampling_rate=16000,
+            padding=True,
+            return_attention_mask=True,
+            return_tensors="pt"
+        )
+        return (
+            text_inputs["input_ids"].to(device),
+            text_inputs["attention_mask"].to(device),
+            audio_inputs["input_features"].to(device),
+            audio_inputs["attention_mask"].to(device),
+        )
+    except Exception as e:
+        print(f"Method failed: {e}")
+        raise RuntimeError(f"Cannot create dummy inputs: {e}")
 
 
 def export_encoder_backend_only(thinker, input_features, token_mask, opset, path_raw, chunk_size: int):
-    """Export encoder backend only (no ConvFrontend). Inputs: (B,A,dim_audio), (B,A) mask. Output: (B,A,H_text)."""
     from conv_frontend import ConvFrontend
     audio_tower = getattr(thinker, "audio_tower", None)
     if audio_tower is None:

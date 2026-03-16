@@ -10,7 +10,6 @@ import torch.nn.functional as F
 from conv_frontend import _pick
 
 def _infer_text_hidden(thinker: nn.Module) -> int:
-    """Infer text hidden size from thinker model."""
     text_hidden = 0
     cfg = getattr(thinker, "config", None)
     if cfg is not None:
@@ -28,7 +27,6 @@ def _infer_text_hidden(thinker: nn.Module) -> int:
     return int(text_hidden)
 
 def _find_audio_proj(root: nn.Module, in_dim: int, out_dim: int) -> nn.Module:
-    """Find audio projection layer in thinker model."""
     cand_names = [
         "audio_feature_projection",
         "audio_projection",
@@ -64,7 +62,6 @@ def _find_audio_proj(root: nn.Module, in_dim: int, out_dim: int) -> nn.Module:
 
 
 class EncoderBackend(nn.Module):
-    """Audio encoder backend - transformer layers after ConvFrontend."""
 
     def __init__(self, audio_tower: nn.Module, tokens_per_chunk: int, window_aftercnn: int):
         super().__init__()
@@ -91,7 +88,6 @@ class EncoderBackend(nn.Module):
         self.window_aftercnn = int(max(1, window_aftercnn))
 
     def _attn_eager(self, attn_mod: nn.Module, x: torch.Tensor, key_mask: Optional[torch.Tensor]) -> torch.Tensor:
-        """Eager attention implementation."""
         B, T, _ = x.shape
         num_heads = int(getattr(attn_mod, "num_heads", getattr(attn_mod, "n_heads", 0)) or 0)
         head_dim = int(getattr(attn_mod, "head_dim", 0) or 0)
@@ -152,7 +148,6 @@ class EncoderBackend(nn.Module):
         return fc2(h)
 
     def forward(self, hidden_states: torch.Tensor, token_mask: Optional[torch.Tensor]) -> torch.Tensor:
-        """Process audio features through transformer layers."""
         B, T, H = hidden_states.shape
         device = hidden_states.device
 
@@ -203,12 +198,6 @@ class EncoderBackend(nn.Module):
 
 
 class AudioEncoderWrapper(nn.Module):
-    """
-    Encoder backend for ONNX export (ConvFrontend handled separately).
-    Input: (B, A, dim_audio) - ConvFrontend output, (B, A) - token mask
-    Output: (B, A, H_text) - audio features projected to text hidden size
-    """
-
     def __init__(self, thinker: nn.Module, tokens_per_chunk: int, window_aftercnn: int):
         super().__init__()
         audio_tower = getattr(thinker, "audio_tower", None)
@@ -237,7 +226,6 @@ class AudioEncoderWrapper(nn.Module):
             self.audio_proj = _find_audio_proj(thinker, in_dim=int(out_dim), out_dim=int(self.text_hidden))
 
     def forward(self, input_features: torch.Tensor, token_mask: torch.Tensor) -> torch.Tensor:
-        """Process ConvFrontend output through backend layers."""
         hs = self.backend(input_features, token_mask)
 
         if self.audio_proj is not None:

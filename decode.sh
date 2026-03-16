@@ -4,8 +4,9 @@ set -e
 cd "$(dirname "$0")"
 
 # Hardcoded paths (edit here if needed)
-MODEL_DIR="./Qwen3-ASR-0.6B"
-WAV_PATH="./Qwen3-ASR-onnx/test_wavs/far_3.wav"
+Mode="1.7B"      # 0.6B or 1.7B
+MODEL_DIR="./model/tokenizer"
+WAV_PATH="./test_wavs/lyrics.wav"
 
 if [ ! -f "${MODEL_DIR}/config.json" ]; then
     echo "Error: ${MODEL_DIR}/config.json not found."
@@ -18,35 +19,33 @@ fi
 
 echo "Audio: $WAV_PATH"
 
-# FP32 inference
+
 echo ""
-echo "=== FP32 Inference ==="
+echo "FP32 Inference"
 python3 infer_qwen3_asr.py \
-    --conv_frontend ./model/conv_frontend.onnx \
-    --encoder ./model/encoder.onnx \
-    --decoder ./model/decoder.onnx \
+    --conv_frontend ./model/model_$Mode/conv_frontend.onnx \
+    --encoder ./model/model_$Mode/encoder.onnx \
+    --decoder ./model/model_$Mode/decoder.onnx \
     --model ${MODEL_DIR} \
     --wav ${WAV_PATH} \
     --max-new-tokens 100
 
-# INT8 encoder + FP32 decoder
 echo ""
-echo "=== INT8 Encoder + FP32 Decoder ==="
+echo "INT8 Encoder + FP32 Decoder"
 python3 infer_qwen3_asr.py \
-    --conv_frontend ./model/conv_frontend.onnx \
-    --encoder ./model/encoder.int8.onnx \
-    --decoder ./model/decoder.onnx \
+    --conv_frontend ./model/model_$Mode/conv_frontend.onnx \
+    --encoder ./model/model_$Mode/encoder.int8.onnx \
+    --decoder ./model/model_$Mode/decoder.onnx \
     --model ${MODEL_DIR} \
     --wav ${WAV_PATH} \
     --max-new-tokens 100
 
-# INT8 decoder
 echo ""
-echo "=== INT8 Decoder ==="
+echo "INT8 Inference"
 python3 infer_qwen3_asr.py \
-    --conv_frontend ./model/conv_frontend.onnx \
-    --encoder ./model/encoder.onnx \
-    --decoder ./model/decoder.int8.onnx \
+    --conv_frontend ./model/model_$Mode/conv_frontend.onnx \
+    --encoder ./model/model_$Mode/encoder.onnx \
+    --decoder ./model/model_$Mode/decoder.int8.onnx \
     --model ${MODEL_DIR} \
     --wav ${WAV_PATH} \
     --max-new-tokens 100
