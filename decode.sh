@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 
 # Hardcoded paths (edit here if needed)
-Mode="1.7B"      # 0.6B or 1.7B
+Mode="0.6B"      # 0.6B or 1.7B
 MODEL_DIR="./model/tokenizer"
 WAV_PATH="./test_wavs/lyrics.wav"
 
@@ -28,6 +28,7 @@ python3 infer_qwen3_asr.py \
     --decoder ./model/model_$Mode/decoder.onnx \
     --model ${MODEL_DIR} \
     --wav ${WAV_PATH} \
+    --device cuda \
     --max-new-tokens 100
 
 echo ""
@@ -38,6 +39,7 @@ python3 infer_qwen3_asr.py \
     --decoder ./model/model_$Mode/decoder.onnx \
     --model ${MODEL_DIR} \
     --wav ${WAV_PATH} \
+    --device cuda \
     --max-new-tokens 100
 
 echo ""
@@ -48,4 +50,5 @@ python3 infer_qwen3_asr.py \
     --decoder ./model/model_$Mode/decoder.int8.onnx \
     --model ${MODEL_DIR} \
     --wav ${WAV_PATH} \
+    --device cpu \
     --max-new-tokens 100
