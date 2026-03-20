@@ -44,17 +44,27 @@ def monkeypatch_ort_get_opset_version():
         onnx_quantizer.get_opset_version = _get_opset_version_safe
 
     if hasattr(base_quantizer.BaseQuantizer, "check_opset_version"):
+
         def patched_check(self):
             try:
                 return _get_opset_version_safe(self.model.model)
             except Exception:
                 return 17
+
         base_quantizer.BaseQuantizer.check_opset_version = patched_check
 
 
 REDUCE_OPS = {
-    "ReduceMean", "ReduceSum", "ReduceMax", "ReduceMin", "ReduceProd",
-    "ReduceL1", "ReduceL2", "ReduceLogSum", "ReduceLogSumExp", "ReduceSumSquare",
+    "ReduceMean",
+    "ReduceSum",
+    "ReduceMax",
+    "ReduceMin",
+    "ReduceProd",
+    "ReduceL1",
+    "ReduceL2",
+    "ReduceLogSum",
+    "ReduceLogSumExp",
+    "ReduceSumSquare",
 }
 
 
@@ -151,14 +161,20 @@ def split_single_output_to_identity_graph(g: onnx.GraphProto) -> int:
 
 def force_opset_and_ir(m: onnx.ModelProto, opset: int = 17, ir: int = 9):
     del m.opset_import[:]
-    m.opset_import.extend([
-        helper.make_operatorsetid("ai.onnx", int(opset)),
-        helper.make_operatorsetid("", int(opset)),
-    ])
+    m.opset_import.extend(
+        [
+            helper.make_operatorsetid("ai.onnx", int(opset)),
+            helper.make_operatorsetid("", int(opset)),
+        ]
+    )
     m.ir_version = int(ir)
 
 
-def _ensure_graph_names(g: onnx.GraphProto, prefix: str = "graph", counter: Optional[List[int]] = None) -> int:
+def _ensure_graph_names(
+    g: onnx.GraphProto,
+    prefix: str = "graph",
+    counter: Optional[List[int]] = None,
+) -> int:
     if counter is None:
         counter = [0]
     nfix = 0
@@ -179,13 +195,22 @@ def _load_model_with_external(path: str) -> onnx.ModelProto:
         m = onnx.load(path)
         try:
             from onnx import external_data_helper
-            external_data_helper.load_external_data_for_model(m, os.path.dirname(path))
+
+            external_data_helper.load_external_data_for_model(
+                m, os.path.dirname(path)
+            )
         except Exception:
             pass
         return m
 
 
-def patch_and_check(path_in: str, path_out: str, opset: int = 17, ir: int = 9, external_data: bool = True):
+def patch_and_check(
+    path_in: str,
+    path_out: str,
+    opset: int = 17,
+    ir: int = 9,
+    external_data: bool = True,
+):
     m = _load_model_with_external(path_in)
 
     n_reduce = fix_reduce_axes_graph(m.graph)
@@ -247,10 +272,13 @@ def _dtype_from_ort_type(type_str: str):
 
 def verify_onnx(model_path: str, inputs_np: Dict[str, Any], fetches: List[str]):
     import onnxruntime as ort
+
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     so.enable_mem_pattern = False
-    sess = ort.InferenceSession(model_path, sess_options=so, providers=["CPUExecutionProvider"])
+    sess = ort.InferenceSession(
+        model_path, sess_options=so, providers=["CPUExecutionProvider"]
+    )
 
     ort_inputs = sess.get_inputs()
     fixed_feed = {}
@@ -260,7 +288,11 @@ def verify_onnx(model_path: str, inputs_np: Dict[str, Any], fetches: List[str]):
             continue
         v = inputs_np[name]
         expected = _dtype_from_ort_type(i.type)
-        if isinstance(v, np.ndarray) and expected is not None and v.dtype != expected:
+        if (
+            isinstance(v, np.ndarray)
+            and expected is not None
+            and v.dtype != expected
+        ):
             v = v.astype(expected, copy=False)
         fixed_feed[name] = v
 
@@ -278,10 +310,16 @@ def verify_onnx(model_path: str, inputs_np: Dict[str, Any], fetches: List[str]):
 
 def _register_qwen3_asr():
     try:
-        from qwen3_asr import Qwen3ASRConfig, Qwen3ASRForConditionalGeneration, Qwen3ASRProcessor
+        from qwen3_asr import (
+            Qwen3ASRConfig,
+            Qwen3ASRForConditionalGeneration,
+            Qwen3ASRProcessor,
+        )
+
         AutoConfig.register("qwen3_asr", Qwen3ASRConfig)
         from transformers import AutoModel as _AM
         from transformers import AutoProcessor as _AP
+
         _AM.register(Qwen3ASRConfig, Qwen3ASRForConditionalGeneration)
         _AP.register(Qwen3ASRConfig, Qwen3ASRProcessor)
         return True
@@ -294,13 +332,15 @@ def make_dummy_inputs(proc, device: torch.device):
 
     try:
         text_dummy = [tok]
-        text_inputs = proc.tokenizer(text_dummy, padding=True, return_tensors="pt")
+        text_inputs = proc.tokenizer(
+            text_dummy, padding=True, return_tensors="pt"
+        )
         audio_inputs = proc.feature_extractor(
             raw_speech=np.zeros(16000, dtype=np.float32),
             sampling_rate=16000,
             padding=True,
             return_attention_mask=True,
-            return_tensors="pt"
+            return_tensors="pt",
         )
         return (
             text_inputs["input_ids"].to(device),
@@ -361,15 +401,20 @@ def export_conv_frontend(
             conv_out_torch = conv_frontend(dummy_mel).detach().cpu().numpy()
         max_diff = np.max(np.abs(conv_out_onnx[0] - conv_out_torch))
         mean_diff = np.mean(np.abs(conv_out_onnx[0] - conv_out_torch))
-        print(f"[verify] conv_frontend max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}")
+        print(
+            f"[verify] conv_frontend max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}"
+        )
         if max_diff > 1e-4:
             print("[warn] conv_frontend verification: max_diff > 1e-4")
 
     return conv_frontend, conv_out
 
 
-def export_encoder_backend_only(thinker, input_features, token_mask, opset, path_raw, chunk_size: int):
+def export_encoder_backend_only(
+    thinker, input_features, token_mask, opset, path_raw, chunk_size: int
+):
     from conv_frontend import ConvFrontend
+
     audio_tower = getattr(thinker, "audio_tower", None)
     if audio_tower is None:
         raise RuntimeError("Cannot find thinker.audio_tower")
@@ -377,7 +422,11 @@ def export_encoder_backend_only(thinker, input_features, token_mask, opset, path
     tokens_per_chunk = frontend.tokens_per_chunk
     window_aftercnn = frontend.window_aftercnn
 
-    w = AudioEncoderWrapper(thinker, tokens_per_chunk=tokens_per_chunk, window_aftercnn=window_aftercnn).eval()
+    w = AudioEncoderWrapper(
+        thinker,
+        tokens_per_chunk=tokens_per_chunk,
+        window_aftercnn=window_aftercnn,
+    ).eval()
 
     if token_mask.dtype != torch.bool:
         token_mask = token_mask.to(torch.bool)
@@ -401,17 +450,42 @@ def export_encoder_backend_only(thinker, input_features, token_mask, opset, path
     )
 
 
-def export_decoder(thinker, audio_token_id, hidden_size, max_total_len,
-                   input_ids, audio_features, attention_mask, cache_position, cache_flat, opset, path_raw):
+def export_decoder(
+    thinker,
+    audio_token_id,
+    hidden_size,
+    max_total_len,
+    input_ids,
+    audio_features,
+    attention_mask,
+    cache_position,
+    cache_flat,
+    opset,
+    path_raw,
+):
     w = DecoderCoreWrapper(
-        thinker, audio_token_id=audio_token_id, hidden_size=hidden_size, max_total_len=max_total_len
+        thinker,
+        audio_token_id=audio_token_id,
+        hidden_size=hidden_size,
+        max_total_len=max_total_len,
     ).eval()
     L = len(w.layers)
 
-    input_names = ["input_ids", "audio_features", "attention_mask", "cache_position"] + \
-                  [f"cache_key_{i}" if j % 2 == 0 else f"cache_value_{i}" for i in range(L) for j in range(2)]
-    output_names = ["logits"] + \
-                   [f"key_delta_{i}" if j % 2 == 0 else f"value_delta_{i}" for i in range(L) for j in range(2)]
+    input_names = [
+        "input_ids",
+        "audio_features",
+        "attention_mask",
+        "cache_position",
+    ] + [
+        f"cache_key_{i}" if j % 2 == 0 else f"cache_value_{i}"
+        for i in range(L)
+        for j in range(2)
+    ]
+    output_names = ["logits"] + [
+        f"key_delta_{i}" if j % 2 == 0 else f"value_delta_{i}"
+        for i in range(L)
+        for j in range(2)
+    ]
 
     dyn = {
         "input_ids": {0: "batch", 1: "seq"},
@@ -428,7 +502,13 @@ def export_decoder(thinker, audio_token_id, hidden_size, max_total_len,
 
     torch.onnx.export(
         w,
-        (input_ids, audio_features, attention_mask, cache_position, *cache_flat),
+        (
+            input_ids,
+            audio_features,
+            attention_mask,
+            cache_position,
+            *cache_flat,
+        ),
         path_raw,
         input_names=input_names,
         output_names=output_names,
@@ -438,9 +518,10 @@ def export_decoder(thinker, audio_token_id, hidden_size, max_total_len,
         dynamo=False,
     )
 
+
 def quantize_encoder_int8(src_enc: str, dst_enc_i8: str):
-    # Encoder has Conv; exclude Conv/ConvInteger for CPU compatibility.
     from onnxruntime.quantization import quantize_dynamic, QuantType
+
     quantize_dynamic(
         model_input=src_enc,
         model_output=dst_enc_i8,
@@ -451,7 +532,13 @@ def quantize_encoder_int8(src_enc: str, dst_enc_i8: str):
             "WeightSymmetric": True,
             "PerChannel": True,
             "OpTypesToQuantize": ["MatMul", "Gemm", "Linear"],
-            "OpTypesToExclude": ["Conv", "ConvInteger", "Slice", "Reshape", "Cast"],
+            "OpTypesToExclude": [
+                "Conv",
+                "ConvInteger",
+                "Slice",
+                "Reshape",
+                "Cast",
+            ],
         },
     )
     patch_and_check(dst_enc_i8, dst_enc_i8, opset=17, ir=9, external_data=False)
@@ -459,6 +546,7 @@ def quantize_encoder_int8(src_enc: str, dst_enc_i8: str):
 
 def quantize_decoder_int8(src_dec: str, dst_dec_i8: str):
     from onnxruntime.quantization import quantize_dynamic, QuantType
+
     quantize_dynamic(
         model_input=src_dec,
         model_output=dst_dec_i8,
@@ -476,15 +564,32 @@ def quantize_decoder_int8(src_dec: str, dst_dec_i8: str):
 
 
 def get_args():
-    p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--model", type=str, required=True, help="Qwen3-ASR checkpoint path")
-    p.add_argument("--outdir", type=str, required=True, help="Output directory for ONNX models")
+    p = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    p.add_argument(
+        "--model", type=str, required=True, help="Qwen3-ASR checkpoint path"
+    )
+    p.add_argument(
+        "--outdir",
+        type=str,
+        required=True,
+        help="Output directory for ONNX models",
+    )
     p.add_argument("--max-total-len", type=int, default=512)
     p.add_argument("--opset", type=int, default=17)
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
-    p.add_argument("--no-int8", action="store_true", help="Skip INT8 quantization")
-    p.add_argument("--verify", action="store_true", help="Run ONNX vs PyTorch verification")
-    p.add_argument("--fp32-no-external-data", action="store_true", help="Save FP32 as single file")
+    p.add_argument(
+        "--no-int8", action="store_true", help="Skip INT8 quantization"
+    )
+    p.add_argument(
+        "--verify", action="store_true", help="Run ONNX vs PyTorch verification"
+    )
+    p.add_argument(
+        "--fp32-no-external-data",
+        action="store_true",
+        help="Save FP32 as single file",
+    )
     p.add_argument("--chunk-size", type=int, default=100)
     return p.parse_args()
 
@@ -498,7 +603,9 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     try:
-        proc = AutoProcessor.from_pretrained(args.model, trust_remote_code=True, fix_mistral_regex=True)
+        proc = AutoProcessor.from_pretrained(
+            args.model, trust_remote_code=True, fix_mistral_regex=True
+        )
     except TypeError:
         proc = AutoProcessor.from_pretrained(args.model, trust_remote_code=True)
 
@@ -515,9 +622,17 @@ def main():
         thinker = thinker.to(device)
 
     audio_token_id = int(getattr(thinker.config, "audio_token_id", 151676))
-    hidden_size = int(getattr(getattr(thinker.config, "text_config", thinker.config), "hidden_size", 1024))
+    hidden_size = int(
+        getattr(
+            getattr(thinker.config, "text_config", thinker.config),
+            "hidden_size",
+            1024,
+        )
+    )
 
-    input_ids, attention_mask, input_features, feature_attention_mask = make_dummy_inputs(proc, device)
+    input_ids, attention_mask, input_features, feature_attention_mask = (
+        make_dummy_inputs(proc, device)
+    )
 
     conv_frontend, _ = export_conv_frontend(
         thinker,
@@ -535,7 +650,10 @@ def main():
         valid = feature_attention_mask != 0
         feat_len = valid.to(torch.int64).sum(dim=1)  # (B,)
         from conv_frontend import _feat_to_audio_tokens_len
-        a_len = _feat_to_audio_tokens_len(feat_len, chunk_size=args.chunk_size)  # (B,)
+
+        a_len = _feat_to_audio_tokens_len(
+            feat_len, chunk_size=args.chunk_size
+        )  # (B,)
         A = int(conv_output.shape[1])
         pos = torch.arange(A, device=device).unsqueeze(0)
         token_mask = (pos < a_len.unsqueeze(1)).to(torch.bool)  # (B, A)
@@ -543,8 +661,21 @@ def main():
     enc_tmp = os.path.join(args.outdir, "_raw_encoder.onnx")
     enc_out = os.path.join(args.outdir, "encoder.onnx")
     with torch.no_grad():
-        export_encoder_backend_only(thinker, conv_output, token_mask, args.opset, enc_tmp, args.chunk_size)
-    patch_and_check(enc_tmp, enc_out, opset=args.opset, ir=9, external_data=(not args.fp32_no_external_data))
+        export_encoder_backend_only(
+            thinker,
+            conv_output,
+            token_mask,
+            args.opset,
+            enc_tmp,
+            args.chunk_size,
+        )
+    patch_and_check(
+        enc_tmp,
+        enc_out,
+        opset=args.opset,
+        ir=9,
+        external_data=(not args.fp32_no_external_data),
+    )
     try:
         os.remove(enc_tmp)
     except Exception:
@@ -552,7 +683,10 @@ def main():
 
     with torch.no_grad():
         wtmp = DecoderCoreWrapper(
-            thinker, audio_token_id=audio_token_id, hidden_size=hidden_size, max_total_len=args.max_total_len
+            thinker,
+            audio_token_id=audio_token_id,
+            hidden_size=hidden_size,
+            max_total_len=args.max_total_len,
         ).eval()
         if args.device == "cuda":
             wtmp = wtmp.to(device)
@@ -568,23 +702,57 @@ def main():
     if n_audio <= 0:
         n_audio = 13
 
-    audio_features = torch.zeros((B, n_audio, hidden_size), device=device, dtype=torch.float32)
+    audio_features = torch.zeros(
+        (B, n_audio, hidden_size), device=device, dtype=torch.float32
+    )
     attention_mask = torch.ones(B, S, device=device, dtype=torch.int64)
 
     cache_flat = []
     for _ in range(L):
-        cache_flat.append(torch.zeros(B, args.max_total_len, kv, hd, device=device, dtype=torch.float32))
-        cache_flat.append(torch.zeros(B, args.max_total_len, kv, hd, device=device, dtype=torch.float32))
+        cache_flat.append(
+            torch.zeros(
+                B,
+                args.max_total_len,
+                kv,
+                hd,
+                device=device,
+                dtype=torch.float32,
+            )
+        )
+        cache_flat.append(
+            torch.zeros(
+                B,
+                args.max_total_len,
+                kv,
+                hd,
+                device=device,
+                dtype=torch.float32,
+            )
+        )
 
     dec_tmp = os.path.join(args.outdir, "_raw_decoder.onnx")
     dec_out = os.path.join(args.outdir, "decoder.onnx")
     with torch.no_grad():
         export_decoder(
-            thinker, audio_token_id, hidden_size, args.max_total_len,
-            input_ids, audio_features, attention_mask, cache_position, cache_flat,
-            args.opset, dec_tmp
+            thinker,
+            audio_token_id,
+            hidden_size,
+            args.max_total_len,
+            input_ids,
+            audio_features,
+            attention_mask,
+            cache_position,
+            cache_flat,
+            args.opset,
+            dec_tmp,
         )
-    patch_and_check(dec_tmp, dec_out, opset=args.opset, ir=9, external_data=(not args.fp32_no_external_data))
+    patch_and_check(
+        dec_tmp,
+        dec_out,
+        opset=args.opset,
+        ir=9,
+        external_data=(not args.fp32_no_external_data),
+    )
     try:
         os.remove(dec_tmp)
     except Exception:
@@ -604,7 +772,10 @@ def main():
         conv_output_np = conv_output.detach().cpu().numpy().astype(np.float32)
         token_mask_np = token_mask.detach().cpu().numpy()
 
-        enc_feed = {"input_features": conv_output_np, "feature_attention_mask": token_mask_np}
+        enc_feed = {
+            "input_features": conv_output_np,
+            "feature_attention_mask": token_mask_np,
+        }
         (audio_feat_out,) = verify_onnx(enc_out, enc_feed, ["audio_features"])
 
         with torch.no_grad():
@@ -613,19 +784,31 @@ def main():
                 tokens_per_chunk=conv_frontend.tokens_per_chunk,
                 window_aftercnn=conv_frontend.window_aftercnn,
             ).eval()
-            audio_feat_torch = backend(conv_output, token_mask).detach().cpu().numpy()
+            audio_feat_torch = (
+                backend(conv_output, token_mask).detach().cpu().numpy()
+            )
         max_diff = np.max(np.abs(audio_feat_out - audio_feat_torch))
         mean_diff = np.mean(np.abs(audio_feat_out - audio_feat_torch))
-        print(f"[verify] encoder max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}")
+        print(
+            f"[verify] encoder max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}"
+        )
 
         input_ids_np = input_ids.detach().cpu().numpy().astype(np.int64)
-        cache_position_np = cache_position.detach().cpu().numpy().astype(np.int64)
-        attention_mask_np = attention_mask.detach().cpu().numpy().astype(np.int64)
+        cache_position_np = (
+            cache_position.detach().cpu().numpy().astype(np.int64)
+        )
+        attention_mask_np = (
+            attention_mask.detach().cpu().numpy().astype(np.int64)
+        )
 
         caches_np = {}
         for i in range(L):
-            caches_np[f"cache_key_{i}"] = np.zeros((B, args.max_total_len, kv, hd), dtype=np.float32)
-            caches_np[f"cache_value_{i}"] = np.zeros((B, args.max_total_len, kv, hd), dtype=np.float32)
+            caches_np[f"cache_key_{i}"] = np.zeros(
+                (B, args.max_total_len, kv, hd), dtype=np.float32
+            )
+            caches_np[f"cache_value_{i}"] = np.zeros(
+                (B, args.max_total_len, kv, hd), dtype=np.float32
+            )
 
         dec_feed = {
             "input_ids": input_ids_np,
@@ -638,14 +821,25 @@ def main():
 
         with torch.no_grad():
             dec_wrapper = DecoderCoreWrapper(
-                thinker, audio_token_id=audio_token_id, hidden_size=hidden_size, max_total_len=args.max_total_len
+                thinker,
+                audio_token_id=audio_token_id,
+                hidden_size=hidden_size,
+                max_total_len=args.max_total_len,
             ).eval()
-            audio_feat_torch = torch.from_numpy(audio_feat_out.astype(np.float32)).to(device)
-            attention_mask_torch = torch.from_numpy(attention_mask_np).to(device)
+            audio_feat_torch = torch.from_numpy(
+                audio_feat_out.astype(np.float32)
+            ).to(device)
+            attention_mask_torch = torch.from_numpy(attention_mask_np).to(
+                device
+            )
             caches_torch = []
             for i in range(L):
-                caches_torch.append(torch.from_numpy(caches_np[f"cache_key_{i}"]).to(device))
-                caches_torch.append(torch.from_numpy(caches_np[f"cache_value_{i}"]).to(device))
+                caches_torch.append(
+                    torch.from_numpy(caches_np[f"cache_key_{i}"]).to(device)
+                )
+                caches_torch.append(
+                    torch.from_numpy(caches_np[f"cache_value_{i}"]).to(device)
+                )
             logits_torch_all = dec_wrapper(
                 input_ids,
                 audio_feat_torch,
@@ -656,7 +850,9 @@ def main():
             logits_torch = logits_torch_all[0].detach().cpu().numpy()
         max_diff = np.max(np.abs(logits_out - logits_torch))
         mean_diff = np.mean(np.abs(logits_out - logits_torch))
-        print(f"[verify] decoder max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}")
+        print(
+            f"[verify] decoder max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}"
+        )
         print("[verify] fp32 ok (encoder+decoder)")
 
         if not args.no_int8:
