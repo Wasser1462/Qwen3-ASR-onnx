@@ -173,7 +173,6 @@ def _ensure_graph_names(g: onnx.GraphProto, prefix: str = "graph", counter: Opti
 
 
 def _load_model_with_external(path: str) -> onnx.ModelProto:
-    # onnx.load_model(load_external_data=True) is not available in older onnx
     try:
         return onnx.load_model(path, load_external_data=True)
     except TypeError:
@@ -314,6 +313,61 @@ def make_dummy_inputs(proc, device: torch.device):
         raise RuntimeError(f"Cannot create dummy inputs: {e}")
 
 
+def export_conv_frontend(
+    thinker,
+    outdir: str,
+    chunk_size: int,
+    opset: int,
+    device: torch.device,
+    verify: bool = False,
+):
+    from conv_frontend import ConvFrontend
+
+    audio_tower = getattr(thinker, "audio_tower", None)
+    if audio_tower is None:
+        raise RuntimeError("Cannot find thinker.audio_tower")
+
+    conv_frontend = ConvFrontend(audio_tower, chunk_size=chunk_size).eval()
+    if device.type == "cuda":
+        conv_frontend = conv_frontend.to(device)
+
+    conv_out = os.path.join(outdir, "conv_frontend.onnx")
+    dummy_mel = torch.randn(1, 200, 128, device=device)
+    with torch.no_grad():
+        torch.onnx.export(
+            conv_frontend,
+            (dummy_mel,),
+            conv_out,
+            input_names=["input_features"],
+            output_names=["conv_output"],
+            opset_version=opset,
+            dynamic_axes={
+                "input_features": {0: "batch", 1: "n_frames"},
+                "conv_output": {0: "batch", 1: "n_audio_tokens"},
+            },
+            do_constant_folding=True,
+            dynamo=False,
+        )
+
+    model = onnx.load(conv_out, load_external_data=False)
+    onnx.save(model, conv_out, save_as_external_data=False)
+    print("[export] conv_frontend.onnx")
+
+    if verify:
+        dummy_mel_np = dummy_mel.detach().cpu().numpy().astype(np.float32)
+        conv_feed = {"input_features": dummy_mel_np}
+        conv_out_onnx = verify_onnx(conv_out, conv_feed, ["conv_output"])
+        with torch.no_grad():
+            conv_out_torch = conv_frontend(dummy_mel).detach().cpu().numpy()
+        max_diff = np.max(np.abs(conv_out_onnx[0] - conv_out_torch))
+        mean_diff = np.mean(np.abs(conv_out_onnx[0] - conv_out_torch))
+        print(f"[verify] conv_frontend max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}")
+        if max_diff > 1e-4:
+            print("[warn] conv_frontend verification: max_diff > 1e-4")
+
+    return conv_frontend, conv_out
+
+
 def export_encoder_backend_only(thinker, input_features, token_mask, opset, path_raw, chunk_size: int):
     from conv_frontend import ConvFrontend
     audio_tower = getattr(thinker, "audio_tower", None)
@@ -443,7 +497,6 @@ def main():
 
     os.makedirs(args.outdir, exist_ok=True)
 
-    # fix mistral regex warning if supported
     try:
         proc = AutoProcessor.from_pretrained(args.model, trust_remote_code=True, fix_mistral_regex=True)
     except TypeError:
@@ -466,47 +519,14 @@ def main():
 
     input_ids, attention_mask, input_features, feature_attention_mask = make_dummy_inputs(proc, device)
 
-    from conv_frontend import ConvFrontend
-    audio_tower = getattr(thinker, "audio_tower", None)
-    if audio_tower is None:
-        raise RuntimeError("Cannot find thinker.audio_tower")
-    conv_frontend = ConvFrontend(audio_tower, chunk_size=args.chunk_size).eval()
-    if args.device == "cuda":
-        conv_frontend = conv_frontend.to(device)
-
-    conv_out = os.path.join(args.outdir, "conv_frontend.onnx")
-    dummy_mel = torch.randn(1, 200, 128, device=device)
-    with torch.no_grad():
-        torch.onnx.export(
-            conv_frontend,
-            (dummy_mel,),
-            conv_out,
-            input_names=["input_features"],
-            output_names=["conv_output"],
-            opset_version=args.opset,
-            dynamic_axes={
-                "input_features": {0: "batch", 1: "n_frames"},
-                "conv_output": {0: "batch", 1: "n_audio_tokens"},
-            },
-            do_constant_folding=True,
-            dynamo=False,
-        )
-    # Embed weights into single file
-    model = onnx.load(conv_out, load_external_data=False)
-    onnx.save(model, conv_out, save_as_external_data=False)
-    print("[export] conv_frontend.onnx")
-
-    if args.verify:
-        dummy_mel_np = dummy_mel.detach().cpu().numpy().astype(np.float32)
-        conv_feed = {"input_features": dummy_mel_np}
-        conv_out_onnx = verify_onnx(conv_out, conv_feed, ["conv_output"])
-        with torch.no_grad():
-            conv_out_torch = conv_frontend(dummy_mel).detach().cpu().numpy()
-        max_diff = np.max(np.abs(conv_out_onnx[0] - conv_out_torch))
-        mean_diff = np.mean(np.abs(conv_out_onnx[0] - conv_out_torch))
-        print(f"[verify] conv_frontend max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}")
-        if max_diff > 1e-4:
-            print("[warn] conv_frontend verification: max_diff > 1e-4")
+    conv_frontend, _ = export_conv_frontend(
+        thinker,
+        args.outdir,
+        chunk_size=args.chunk_size,
+        opset=args.opset,
+        device=device,
+        verify=args.verify,
+    )
 
     with torch.no_grad():
         mel_input = input_features.transpose(1, 2)  # (B, F, T) -> (B, T, F)
