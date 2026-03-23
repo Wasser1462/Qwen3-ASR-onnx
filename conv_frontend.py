@@ -30,6 +30,7 @@ def _proc_audio_tokens_len_int(n: int) -> int:
     out = ((feat - 1) // 2 + 1 - 1) // 2 + 1 + (int(n) // 100) * 13
     return int(out)
 
+
 def _aftercnn(x: int) -> int:
     x = (x - 1) // 2 + 1
     x = (x - 1) // 2 + 1
@@ -38,13 +39,16 @@ def _aftercnn(x: int) -> int:
 
 def _feat_to_audio_tokens_len(feat_len, chunk_size: int = 100):
     import torch
+
     if isinstance(feat_len, torch.Tensor):
         cs = int(chunk_size)
         n = feat_len.to(torch.int64)
         full = n // cs
         rem = n % cs
         tn = _conv_out_len_3x_stride2(cs)
-        out = full * tn + torch.tensor([_aftercnn(int(r)) for r in rem], device=n.device)
+        out = full * tn + torch.tensor(
+            [_aftercnn(int(r)) for r in rem], device=n.device
+        )
         return torch.clamp(out, min=0).to(torch.int64)
     else:
         n = int(feat_len)
@@ -57,23 +61,34 @@ def _feat_to_audio_tokens_len(feat_len, chunk_size: int = 100):
 
 
 class ConvFrontend(nn.Module):
-
     def __init__(self, audio_tower: nn.Module, chunk_size: int = 100):
         super().__init__()
         self.audio_tower = audio_tower
 
         cfg = getattr(audio_tower, "config", None)
-        self.n_window = int(getattr(cfg, "n_window", 100)) if cfg is not None else 100
-        self.n_window_infer = int(getattr(cfg, "n_window_infer", 400)) if cfg is not None else 400
-        self.conv_chunksize = int(getattr(cfg, "conv_chunksize", 500)) if cfg is not None else 500
+        self.n_window = (
+            int(getattr(cfg, "n_window", 100)) if cfg is not None else 100
+        )
+        self.n_window_infer = (
+            int(getattr(cfg, "n_window_infer", 400)) if cfg is not None else 400
+        )
+        self.conv_chunksize = (
+            int(getattr(cfg, "conv_chunksize", 500)) if cfg is not None else 500
+        )
 
         if int(chunk_size) <= 0:
             cands = [max(1, self.n_window * 2), max(1, self.n_window), 100]
             seen = set()
-            cands = [c for c in cands if (c > 0 and (c not in seen) and not seen.add(c))]
+            cands = [
+                c
+                for c in cands
+                if (c > 0 and (c not in seen) and not seen.add(c))
+            ]
             chosen = cands[0]
             for cs in cands:
-                if _conv_out_len_3x_stride2(cs) == _proc_audio_tokens_len_int(cs):
+                if _conv_out_len_3x_stride2(cs) == _proc_audio_tokens_len_int(
+                    cs
+                ):
                     chosen = cs
                     break
             self.chunk_size = int(chosen)
@@ -81,7 +96,10 @@ class ConvFrontend(nn.Module):
             self.chunk_size = int(chunk_size)
 
         convs = []
-        for cand in (["conv2d1", "conv2d2", "conv2d3"], ["conv1", "conv2", "conv3"]):
+        for cand in (
+            ["conv2d1", "conv2d2", "conv2d3"],
+            ["conv1", "conv2", "conv3"],
+        ):
             tmp = []
             ok = True
             for nm in cand:
@@ -102,12 +120,22 @@ class ConvFrontend(nn.Module):
                     if isinstance(m, (nn.Conv1d, nn.Conv2d)):
                         convs.append(m)
         if convs:
-            convs.sort(key=lambda x: getattr(x, 'weight', torch.zeros(1)).shape[0] if hasattr(x, 'weight') else 0)
+            convs.sort(
+                key=lambda x: (
+                    getattr(x, "weight", torch.zeros(1)).shape[0]
+                    if hasattr(x, "weight")
+                    else 0
+                )
+            )
         if not convs:
-            raise RuntimeError(f"Cannot find conv frontend layers in {type(self.audio_tower)}")
+            raise RuntimeError(
+                f"Cannot find conv frontend layers in {type(self.audio_tower)}"
+            )
         self.convs = nn.ModuleList(convs)
 
-        self.conv_out = _pick(self.audio_tower, ["conv_out", "proj", "linear_out"])
+        self.conv_out = _pick(
+            self.audio_tower, ["conv_out", "proj", "linear_out"]
+        )
         if self.conv_out is None:
             raise RuntimeError("Cannot find audio_tower.conv_out")
 
@@ -127,7 +155,9 @@ class ConvFrontend(nn.Module):
         num_chunks = Tpad // cs
 
         x = mel_bt_f.view(B, num_chunks, cs, Fdim)
-        x = x.view(B * num_chunks, cs, Fdim).transpose(1, 2).unsqueeze(1)  # (Bn,1,F,T)
+        x = (
+            x.view(B * num_chunks, cs, Fdim).transpose(1, 2).unsqueeze(1)
+        )  # (Bn,1,F,T)
 
         if self.conv_chunksize > 0 and (B * num_chunks) > self.conv_chunksize:
             outs = []
