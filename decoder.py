@@ -144,30 +144,8 @@ class DecoderCoreWrapper(nn.Module):
         )
 
     def _get_cos_sin(
-        self, attn_mod: nn.Module, cache_position_1d: torch.Tensor
+        self, _attn_mod: nn.Module, cache_position_1d: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        rotary = getattr(attn_mod, "rotary_emb", None)
-        if rotary is None:
-            rotary = getattr(self.core, "rotary_emb", None)
-
-        if rotary is not None:
-            pos_ids = cache_position_1d.view(1, -1)
-            try:
-                dummy = torch.zeros(
-                    (1, 1, pos_ids.shape[1], self._head_dim),
-                    device=cache_position_1d.device,
-                    dtype=torch.float32,
-                )
-                cos, sin = rotary(dummy, pos_ids)
-                return cos, sin
-            except Exception:
-                pass
-            try:
-                cos, sin = rotary(pos_ids)
-                return cos, sin
-            except Exception:
-                pass
-
         return self.rope_fallback(cache_position_1d)
 
     def _apply_qk_norm_if_any(
@@ -213,8 +191,9 @@ class DecoderCoreWrapper(nn.Module):
         cache_k_full: torch.Tensor,
         cache_v_full: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # keep attention_mask in graph
-        x = x + (attention_mask[:, :1].to(dtype=x.dtype) * 0.0)
+        x = x + (
+            attention_mask.to(dtype=torch.float32).sum() * 0.0
+        ).to(dtype=x.dtype)
 
         x_shape = onnx_ops.shape_as_tensor(x)
         B = x_shape[0]
@@ -223,7 +202,8 @@ class DecoderCoreWrapper(nn.Module):
         cache_shape = onnx_ops.shape_as_tensor(cache_k_full)
         cache_capacity = cache_shape[1].to(cache_position.dtype)
 
-        past_len = cache_position[0]
+        cp = cache_position.reshape(-1)
+        past_len = cp[0]
         past_len_clamped = torch.minimum(past_len, cache_capacity)
         past_len_cache = torch.clamp(past_len_clamped, min=1)
 
@@ -290,8 +270,8 @@ class DecoderCoreWrapper(nn.Module):
         cache_valid = (past_len_clamped > 0).to(dtype=scores_cache.dtype)
         scores_cache = scores_cache + (1.0 - cache_valid) * (-1e4)
 
-        q_pos = cache_position.unsqueeze(1)
-        k_pos = cache_position.unsqueeze(0)
+        q_pos = cp.unsqueeze(1)
+        k_pos = cp.unsqueeze(0)
         causal_ok = k_pos <= q_pos
         causal_new = (
             torch.where(
@@ -306,7 +286,7 @@ class DecoderCoreWrapper(nn.Module):
             .unsqueeze(0)
             .unsqueeze(0)
         )
-        scores_new = scores_new + causal_new
+        scores_new = scores_new + causal_new.expand_as(scores_new)
 
         scores = torch.cat([scores_cache, scores_new], dim=-1)
         attn = torch.softmax(scores, dim=-1).to(dtype=q.dtype)

@@ -230,8 +230,9 @@ def get_args():
     p.add_argument(
         "--wav",
         type=str,
+        nargs="+",
         required=True,
-        help=".wav or .npy (16k mono preferred)",
+        help=".wav or .npy paths",
     )
     p.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     p.add_argument("--max-total-len", type=int, default=1024)
@@ -271,15 +272,22 @@ def main():
 
     conv_sess = _make_sess(args.conv_frontend, device=args.device)
 
-    wav = _load_audio_any(args.wav)
-    audio_duration = max(len(wav) / 16000.0, 1e-6)
+    wav_paths = list(args.wav)
+    wavs = [_load_audio_any(p) for p in wav_paths]
+    max_samples = max(int(w.shape[0]) for w in wavs)
+    if max_samples <= 0:
+        raise RuntimeError("empty audio after load")
+    wavs_pad = [
+        np.pad(w, (0, max_samples - int(w.shape[0])), mode="constant")
+        for w in wavs
+    ]
+    total_audio_sec = sum(max(len(w) / 16000.0, 1e-6) for w in wavs)
 
-    wav_samples = int(wav.shape[0])
     audio_inputs = proc.feature_extractor(
-        [wav],
+        wavs_pad,
         sampling_rate=16000,
         padding="max_length",
-        max_length=wav_samples,
+        max_length=max_samples,
         truncation=True,
         return_attention_mask=True,
         return_tensors="np",
@@ -291,11 +299,15 @@ def main():
 
     if args.debug:
         print(
-            "wav range:",
-            float(wav.min()),
-            float(wav.max()),
-            "len:",
-            wav.shape[0],
+            "batch:",
+            len(wavs),
+            "max_samples:",
+            max_samples,
+            "wav[0] range:",
+            float(wavs[0].min()),
+            float(wavs[0].max()),
+            "len[0]:",
+            wavs[0].shape[0],
         )
         print("input_features:", input_features.shape, input_features.dtype)
         print(
@@ -336,12 +348,23 @@ def main():
     (audio_features,) = enc.run(["audio_features"], enc_inputs)
     audio_features = np.asarray(audio_features, dtype=np.float32)
 
-    if audio_features.ndim != 3 or audio_features.shape[0] != 1:
+    if audio_features.ndim != 3:
         raise RuntimeError(
             f"unexpected audio_features shape: {audio_features.shape}"
         )
 
-    A = int(a_len[0])
+    B = int(audio_features.shape[0])
+    if B != len(wav_paths):
+        raise RuntimeError(
+            f"batch size mismatch: wavs={len(wav_paths)}, encoder B={B}"
+        )
+
+    a_uni = np.unique(a_len)
+    if a_uni.size != 1:
+        raise RuntimeError(
+            "equal-length batch required; a_len=" + str(a_len.tolist())
+        )
+    A = int(a_uni[0])
     if A <= 0:
         raise RuntimeError(f"invalid audio token length: {A}")
 
@@ -363,15 +386,14 @@ def main():
     assistant_text = "<|im_start|>assistant\n"
     full_prompt = system_text + user_text + assistant_text
 
-    input_ids = np.asarray(
-        [tok.encode(full_prompt, add_special_tokens=False)], dtype=np.int64
-    )
-    S0 = int(input_ids.shape[1])
+    enc_one = tok.encode(full_prompt, add_special_tokens=False)
+    S0 = len(enc_one)
+    input_ids = np.tile(np.asarray(enc_one, dtype=np.int64), (B, 1))
 
-    num_audio_slots = int((input_ids == audio_token_id).sum())
-    if num_audio_slots != A:
+    slots = (input_ids == audio_token_id).sum(axis=1)
+    if not np.all(slots == A):
         raise RuntimeError(
-            f"audio slot mismatch: prompt has {num_audio_slots} audio tokens, encoder produced {A}"
+            f"audio slot mismatch: slots={slots.tolist()} A={A}"
         )
 
     L, model_max_total_len, kv, hd = _infer_cache_meta(dec)
@@ -412,64 +434,115 @@ def main():
         raise RuntimeError(f"decoder outputs missing logits")
 
     def _run_decoder(step_input_ids: np.ndarray, cur_len: int) -> np.ndarray:
+        Sb = int(step_input_ids.shape[0])
         S = int(step_input_ids.shape[1])
+        if Sb != B:
+            raise RuntimeError(
+                f"step_input_ids batch {Sb} != B {B}"
+            )
         if cur_len + S > runtime_max_total_len:
             raise RuntimeError(
                 f"cur_len overflow: {cur_len}+{S} > {runtime_max_total_len}"
             )
 
-        attn_mask = np.ones((B, S), dtype=np.int64)
         cache_pos = np.arange(cur_len, cur_len + S, dtype=np.int64)
+        attn1 = np.ones((1, S), dtype=np.int64)
 
-        feed: Dict[str, np.ndarray] = {
-            "input_ids": step_input_ids,
-            "audio_features": audio_features,
-            "attention_mask": attn_mask,
-            "cache_position": cache_pos,
-        }
-        for i in range(L):
-            feed[f"cache_key_{i}"] = caches[2 * i]
-            feed[f"cache_value_{i}"] = caches[2 * i + 1]
+        def _run_batched() -> np.ndarray:
+            attn_mask = np.ones((B, S), dtype=np.int64)
+            feed: Dict[str, np.ndarray] = {
+                "input_ids": step_input_ids,
+                "audio_features": audio_features,
+                "attention_mask": attn_mask,
+                "cache_position": cache_pos,
+            }
+            for i in range(L):
+                feed[f"cache_key_{i}"] = caches[2 * i]
+                feed[f"cache_value_{i}"] = caches[2 * i + 1]
+            outs = dec.run(dec_out_names, feed)
+            out_map = {name: val for name, val in zip(dec_out_names, outs)}
+            logits = np.asarray(out_map["logits"], dtype=np.float32)
+            for i in range(L):
+                kd = np.asarray(out_map[f"key_delta_{i}"], dtype=np.float32)
+                vd = np.asarray(out_map[f"value_delta_{i}"], dtype=np.float32)
+                caches[2 * i][:, cur_len : cur_len + S] = kd
+                caches[2 * i + 1][:, cur_len : cur_len + S] = vd
+            return logits
 
-        outs = dec.run(dec_out_names, feed)
-        out_map = {name: val for name, val in zip(dec_out_names, outs)}
-        logits = np.asarray(out_map["logits"], dtype=np.float32)
+        def _run_one(bi: int) -> np.ndarray:
+            feed: Dict[str, np.ndarray] = {
+                "input_ids": step_input_ids[bi : bi + 1],
+                "audio_features": audio_features[bi : bi + 1],
+                "attention_mask": attn1,
+                "cache_position": cache_pos,
+            }
+            for i in range(L):
+                feed[f"cache_key_{i}"] = caches[2 * i][bi : bi + 1]
+                feed[f"cache_value_{i}"] = caches[2 * i + 1][bi : bi + 1]
+            outs = dec.run(dec_out_names, feed)
+            out_map = {name: val for name, val in zip(dec_out_names, outs)}
+            logits_b = np.asarray(out_map["logits"], dtype=np.float32)
+            for i in range(L):
+                kd = np.asarray(out_map[f"key_delta_{i}"], dtype=np.float32)
+                vd = np.asarray(out_map[f"value_delta_{i}"], dtype=np.float32)
+                caches[2 * i][bi : bi + 1, cur_len : cur_len + S] = kd
+                caches[2 * i + 1][bi : bi + 1, cur_len : cur_len + S] = vd
+            return logits_b
 
-        for i in range(L):
-            kd = np.asarray(out_map[f"key_delta_{i}"], dtype=np.float32)
-            vd = np.asarray(out_map[f"value_delta_{i}"], dtype=np.float32)
-            caches[2 * i][:, cur_len : cur_len + S] = kd
-            caches[2 * i + 1][:, cur_len : cur_len + S] = vd
-
-        return logits
+        if B == 1:
+            return _run_batched()
+        try:
+            return _run_batched()
+        except Exception:
+            return np.concatenate(
+                [_run_one(bi) for bi in range(B)], axis=0
+            )
 
     cur_len = 0
     logits = _run_decoder(input_ids, cur_len)
     cur_len += S0
 
     eos_id = tok.eos_token_id
-    out_ids: List[int] = []
+    out_rows: List[List[int]] = [[] for _ in range(B)]
 
     infer_start_time = time.time()
 
-    next_id = int(np.argmax(logits[0, -1], axis=-1))
-    out_ids.append(next_id)
+    next_ids = np.argmax(logits[:, -1, :], axis=-1).astype(np.int64)
+    for b in range(B):
+        out_rows[b].append(int(next_ids[b]))
+    active = np.ones(B, dtype=np.bool_)
+    if eos_id is not None:
+        active &= next_ids != int(eos_id)
 
     for _ in range(int(args.max_new_tokens) - 1):
-        if eos_id is not None and out_ids[-1] == int(eos_id):
+        if not bool(np.any(active)):
             break
-        step_ids = np.asarray([[out_ids[-1]]], dtype=np.int64)
+        step_ids = np.empty((B, 1), dtype=np.int64)
+        for b in range(B):
+            if active[b]:
+                step_ids[b, 0] = out_rows[b][-1]
+            else:
+                step_ids[b, 0] = (
+                    int(eos_id) if eos_id is not None else out_rows[b][-1]
+                )
         logits = _run_decoder(step_ids, cur_len)
         cur_len += 1
-        tid = int(np.argmax(logits[0, -1], axis=-1))
-        out_ids.append(tid)
+        next_ids = np.argmax(logits[:, -1, :], axis=-1).astype(np.int64)
+        for b in range(B):
+            if not active[b]:
+                continue
+            out_rows[b].append(int(next_ids[b]))
+            if eos_id is not None and int(next_ids[b]) == int(eos_id):
+                active[b] = False
 
-    text = tok.decode(out_ids, skip_special_tokens=True)
-    text = text.replace("\ufffd", "")
-    print(text)
+    for b in range(B):
+        text = tok.decode(out_rows[b], skip_special_tokens=True)
+        text = text.replace("\ufffd", "")
+        prefix = f"[{wav_paths[b]}] " if B > 1 else ""
+        print(prefix + text)
 
     processing_time = time.time() - infer_start_time
-    rtf = processing_time / audio_duration
+    rtf = processing_time / total_audio_sec
     print(f"RTF: {rtf:.4f}")
 
 
