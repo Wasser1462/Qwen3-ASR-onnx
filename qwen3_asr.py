@@ -281,28 +281,73 @@ class Qwen3ASRProcessor(ProcessorMixin):
             - **input_features** -- Audio input features to be fed to a model. Returned when `audio` is not `None`.
             - **feature_attention_mask** -- Audio attention mask. Returned when `audio` is not `None`.
         """
-        output_kwargs = Qwen3ASRProcessorKwargs(**kwargs)
+        if text is None:
+            raise ValueError("You need to specify either a `text` input to process.")
 
-        if text is not None:
-            text_inputs = self.tokenizer(text, **output_kwargs["text_kwargs"])
+        merge = getattr(self, "_merge_kwargs", None)
+        if merge is not None:
+            output_kwargs = merge(
+                Qwen3ASRProcessorKwargs,
+                tokenizer_init_kwargs=self.tokenizer.init_kwargs,
+                **kwargs,
+            )
         else:
-            text_inputs = None
+            output_kwargs = Qwen3ASRProcessorKwargs(**kwargs)
 
         if audio is not None:
+            output_kwargs["audio_kwargs"]["padding"] = True
+            output_kwargs["audio_kwargs"]["truncation"] = False
             audio_inputs = self.feature_extractor(
                 audio, **output_kwargs["audio_kwargs"]
             )
             audio_inputs["feature_attention_mask"] = audio_inputs.pop(
                 "attention_mask"
-            )  # rename feature_attention_mask to prevent conflicts later on
+            )
+            audio_inputs["input_features"] = audio_inputs.pop("input_features")
+            feat_sum = audio_inputs["feature_attention_mask"]
+            if hasattr(feat_sum, "sum"):
+                lens = feat_sum.sum(-1)
+            else:
+                lens = np.sum(feat_sum, axis=-1)
+            audio_lengths = iter(_get_feat_extract_output_lengths(lens))
         else:
-            audio_inputs = None
+            audio_inputs = {}
+            audio_lengths = iter([])
+
+        if not isinstance(text, list):
+            text = [text]
+
+        text = self.replace_multimodal_special_tokens(text, audio_lengths)
+
+        texts_inputs = self.tokenizer(text, **output_kwargs["text_kwargs"])
 
         return BatchFeature(
-            data={**text_inputs, **audio_inputs}
-            if text_inputs and audio_inputs
-            else (text_inputs or audio_inputs)
+            data={**texts_inputs, **audio_inputs},
+            tensor_type=kwargs.get("return_tensors"),
         )
+
+    def replace_multimodal_special_tokens(self, text, audio_lengths):
+        processed_text = []
+        for sample in text:
+            special_tokens = [re.escape(tok) for tok in [self.audio_token]]
+            pattern = "|".join(special_tokens)
+            positions = sorted(
+                [
+                    (match.start(), match.group())
+                    for match in re.finditer(pattern, sample)
+                ]
+            )
+            positions.sort(key=lambda x: x[0])
+            for _, special_token in positions:
+                if special_token == self.audio_token:
+                    sample = sample.replace(
+                        self.audio_token,
+                        "<|audio_placeholder|>" * next(audio_lengths),
+                        1,
+                    )
+            sample = sample.replace("<|audio_placeholder|>", self.audio_token)
+            processed_text.append(sample)
+        return processed_text
 
     def batch_decode(self, *args, **kwargs):
         """
