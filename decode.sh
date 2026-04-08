@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 # Hardcoded paths (edit here if needed)
 Mode="0.6B"      # 0.6B or 1.7B
 MODEL_DIR="./model/tokenizer"
-WAV_PATH="./test_wavs/lyrics.wav"
+WAV_PATH="./test_wavs/rag_chemistry.wav"
 
 if [ ! -f "${MODEL_DIR}/config.json" ]; then
     echo "Error: ${MODEL_DIR}/config.json not found."
@@ -28,6 +28,18 @@ python3 infer_qwen3_asr.py \
     --decoder ./model/model_$Mode/decoder.onnx \
     --model ${MODEL_DIR} \
     --wav ${WAV_PATH} \
+    --device cuda \
+    --max-new-tokens 100
+
+echo ""
+echo "FP32 with context "
+python3 infer_qwen3_asr.py \
+    --conv_frontend ./model/model_$Mode/conv_frontend.onnx \
+    --encoder ./model/model_$Mode/encoder.onnx \
+    --decoder ./model/model_$Mode/decoder.onnx \
+    --model ${MODEL_DIR} \
+    --wav ${WAV_PATH} \
+    --context "酯" \
     --device cuda \
     --max-new-tokens 100
 
