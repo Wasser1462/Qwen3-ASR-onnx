@@ -90,8 +90,12 @@ class DecoderCoreWrapper(nn.Module):
         audio_token_id: int,
         hidden_size: int,
         max_total_len: int = 512,
+        logits_mode: str = "all",
     ):
         super().__init__()
+        if logits_mode not in ("all", "last"):
+            raise ValueError("logits_mode must be 'all' or 'last'")
+        self.logits_mode = logits_mode
         self.thinker = thinker
         self.audio_token_id = int(audio_token_id)
         self.hidden_size = int(hidden_size)
@@ -360,6 +364,8 @@ class DecoderCoreWrapper(nn.Module):
             deltas.append(v_delta.to(model_dtype))
 
         x = self.norm(x)
+        if self.logits_mode == "last":
+            x = x[:, -1:, :]
         logits = self.lm_head(x).float()
         return (logits, *deltas)
 
