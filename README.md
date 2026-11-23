@@ -41,18 +41,32 @@ prefill logits tensor. Older runtimes that require a row for every prompt
 position are incompatible. Default `all` exports retain the previous layout.
 ONNX inputs, output names, opset 17, IR 9 and external-data support are unchanged.
 
-Run the regression tests with a local Qwen3-ASR-0.6B checkpoint:
+Run the default regression tests without a checkpoint or network access:
+
+```bash
+python -m pytest tests/test_decoder_logits_mode.py -q
+```
+
+These tests instantiate the real Qwen3-ASR model classes with a small,
+randomly initialized configuration. They check projection input length,
+logits shape, full-layer KV deltas, default/all equivalence, and actual
+all/last ONNX exports and ONNX Runtime executions at multiple input lengths.
+The small model tests validate behavior, not recognition accuracy.
+
+Pass a local Qwen3-ASR-0.6B checkpoint to also run the same model tests
+with pretrained weights:
 
 ```bash
 python -m pytest tests/test_decoder_logits_mode.py \
   --checkpoint "$QWEN3_ASR_CHECKPOINT" -q
 ```
 
-Without `--checkpoint`, model-dependent tests are skipped. With it, tests
-compare all logits/KV outputs in PyTorch and actual ONNX Runtime executions
-for multiple input lengths. FP32 all/last logits use `atol=rtol=1e-4`; KV uses
-`atol=rtol=1e-5`, with finite values required. The exporter's `--verify` output
-is an additional smoke check and does not replace these assertions.
+Only the pretrained-checkpoint cases are skipped without `--checkpoint`.
+FP32 all/last logits use `atol=rtol=1e-4`; KV uses `atol=rtol=1e-5`, with
+finite values required. The exporter's `--verify` checks finite ONNX outputs
+and matching ONNX/PyTorch decoder logits shapes before reporting differences.
+It remains an additional smoke check without an enforced numerical tolerance
+and does not replace the regression assertions.
 
 # C++ Reference
  - https://github.com/k2-fsa/sherpa-onnx

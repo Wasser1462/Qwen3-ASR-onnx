@@ -8,6 +8,7 @@ import onnxruntime as ort
 import pytest
 import torch
 
+import export_qwen3_asr_onnx as exporter
 from decoder import DecoderCoreWrapper
 from export_qwen3_asr_onnx import export_decoder, get_args, patch_and_check
 
@@ -119,6 +120,33 @@ def test_cli_invalid_logits_mode(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         get_args()
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("seq", [1, 8])
+def test_decoder_logits_diff_accepts_matching_shapes(seq):
+    reference = np.zeros((1, seq, 7), dtype=np.float32)
+    actual = reference.copy()
+    actual[..., 0] = 7
+    max_diff, mean_diff = exporter._decoder_logits_diff(actual, reference)
+    assert max_diff == 7
+    assert mean_diff == 1
+
+
+@pytest.mark.parametrize("onnx_shape,torch_shape", [
+    ((1, 1, 7), (1, 8, 7)),
+    ((1, 8, 7), (1, 1, 7)),
+    ((2, 1, 7), (1, 1, 7)),
+    ((1, 1, 7), (1, 7)),
+    ((1, 1, 7), (1, 1, 1)),
+])
+def test_decoder_logits_diff_rejects_broadcastable_shapes(
+    onnx_shape, torch_shape
+):
+    with pytest.raises(RuntimeError, match="shape mismatch"):
+        exporter._decoder_logits_diff(
+            np.zeros(onnx_shape, dtype=np.float32),
+            np.zeros(torch_shape, dtype=np.float32),
+        )
 
 
 def test_exported_last_shape_and_full_kv(thinker, tmp_path):

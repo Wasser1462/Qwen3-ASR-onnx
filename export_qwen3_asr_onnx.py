@@ -308,6 +308,16 @@ def verify_onnx(model_path: str, inputs_np: Dict[str, Any], fetches: List[str]):
     return outs
 
 
+def _decoder_logits_diff(onnx_logits: np.ndarray, torch_logits: np.ndarray):
+    if onnx_logits.shape != torch_logits.shape:
+        raise RuntimeError(
+            "verify decoder logits shape mismatch: "
+            f"ONNX {onnx_logits.shape} != PyTorch {torch_logits.shape}"
+        )
+    diff = np.abs(onnx_logits - torch_logits)
+    return np.max(diff), np.mean(diff)
+
+
 def _register_qwen3_asr():
     try:
         from qwen3_asr import (
@@ -865,8 +875,7 @@ def main():
                 *caches_torch,
             )
             logits_torch = logits_torch_all[0].detach().cpu().numpy()
-        max_diff = np.max(np.abs(logits_out - logits_torch))
-        mean_diff = np.mean(np.abs(logits_out - logits_torch))
+        max_diff, mean_diff = _decoder_logits_diff(logits_out, logits_torch)
         print(
             f"[verify] decoder max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}"
         )
