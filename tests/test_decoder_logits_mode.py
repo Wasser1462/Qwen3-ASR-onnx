@@ -95,9 +95,11 @@ def test_default_mode_matches_all(thinker):
 
 
 @pytest.mark.parametrize("mode", ["", "LAST", "both", None])
-def test_invalid_logits_mode_rejected(thinker, mode):
+def test_invalid_logits_mode_rejected(mode):
     with pytest.raises(ValueError, match="logits_mode"):
-        wrapper(thinker, logits_mode=mode)
+        DecoderCoreWrapper(
+            None, audio_token_id=0, hidden_size=1, logits_mode=mode
+        )
 
 
 @pytest.mark.parametrize("mode", [None, "all", "last"])
