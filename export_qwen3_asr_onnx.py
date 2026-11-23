@@ -308,6 +308,16 @@ def verify_onnx(model_path: str, inputs_np: Dict[str, Any], fetches: List[str]):
     return outs
 
 
+def _decoder_logits_diff(onnx_logits: np.ndarray, torch_logits: np.ndarray):
+    if onnx_logits.shape != torch_logits.shape:
+        raise RuntimeError(
+            "verify decoder logits shape mismatch: "
+            f"ONNX {onnx_logits.shape} != PyTorch {torch_logits.shape}"
+        )
+    diff = np.abs(onnx_logits - torch_logits)
+    return np.max(diff), np.mean(diff)
+
+
 def _register_qwen3_asr():
     try:
         from qwen3_asr import (
@@ -462,12 +472,14 @@ def export_decoder(
     cache_flat,
     opset,
     path_raw,
+    logits_mode: str = "all",
 ):
     w = DecoderCoreWrapper(
         thinker,
         audio_token_id=audio_token_id,
         hidden_size=hidden_size,
         max_total_len=max_total_len,
+        logits_mode=logits_mode,
     ).eval()
     L = len(w.layers)
 
@@ -492,7 +504,9 @@ def export_decoder(
         "audio_features": {0: "batch", 1: "n_audio_tokens"},
         "attention_mask": {0: "batch", 1: "seq"},
         "cache_position": {0: "seq"},
-        "logits": {0: "batch", 1: "seq"},
+        "logits": (
+            {0: "batch", 1: "seq"} if logits_mode == "all" else {0: "batch"}
+        ),
     }
     for i in range(L):
         dyn[f"cache_key_{i}"] = {0: "batch", 1: "max_total_len"}
@@ -517,6 +531,12 @@ def export_decoder(
         dynamic_axes=dyn,
         dynamo=False,
     )
+    if logits_mode == "last":
+        # The legacy exporter leaves Slice's time dimension symbolic even
+        # though every non-empty input produces exactly one logits row.
+        model = onnx.load(path_raw, load_external_data=False)
+        model.graph.output[0].type.tensor_type.shape.dim[1].dim_value = 1
+        onnx.save_model(model, path_raw)
 
 
 def quantize_encoder_int8(src_enc: str, dst_enc_i8: str):
@@ -577,6 +597,10 @@ def get_args():
         help="Output directory for ONNX models",
     )
     p.add_argument("--max-total-len", type=int, default=512)
+    p.add_argument(
+        "--logits-mode", choices=["all", "last"], default="all",
+        help="Project all decoder positions or only the last; KV deltas stay full",
+    )
     p.add_argument("--opset", type=int, default=17)
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     p.add_argument(
@@ -687,6 +711,7 @@ def main():
             audio_token_id=audio_token_id,
             hidden_size=hidden_size,
             max_total_len=args.max_total_len,
+            logits_mode=args.logits_mode,
         ).eval()
         if args.device == "cuda":
             wtmp = wtmp.to(device)
@@ -745,6 +770,7 @@ def main():
             cache_flat,
             args.opset,
             dec_tmp,
+            logits_mode=args.logits_mode,
         )
     patch_and_check(
         dec_tmp,
@@ -825,6 +851,7 @@ def main():
                 audio_token_id=audio_token_id,
                 hidden_size=hidden_size,
                 max_total_len=args.max_total_len,
+                logits_mode=args.logits_mode,
             ).eval()
             audio_feat_torch = torch.from_numpy(
                 audio_feat_out.astype(np.float32)
@@ -848,8 +875,7 @@ def main():
                 *caches_torch,
             )
             logits_torch = logits_torch_all[0].detach().cpu().numpy()
-        max_diff = np.max(np.abs(logits_out - logits_torch))
-        mean_diff = np.mean(np.abs(logits_out - logits_torch))
+        max_diff, mean_diff = _decoder_logits_diff(logits_out, logits_torch)
         print(
             f"[verify] decoder max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}"
         )
